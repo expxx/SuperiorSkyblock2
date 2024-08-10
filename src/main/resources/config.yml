@@ -814,3 +814,8 @@ player-respawn:
 # database with the new block counts. If the server stops and there was a change to the block counts, the block counts
 # will be saved to the database despite the threshold.
 block-counts-save-threshold: 100
+
+# This option is only used for Developers trying to use the SuperiorSkyblockAPI on a server
+# that shouldn't load the SuperiorSkyblock2 Commands or System, mainly only to interact
+# with the database.
+api-mode: false

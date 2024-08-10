@@ -212,6 +212,7 @@ public class SettingsContainer {
     public final boolean deleteUnsafeWarps;
     public final List<RespawnAction> playerRespawnActions;
     public final BigInteger blockCountsSaveThreshold;
+    public final boolean apiMode;
 
     public SettingsContainer(SuperiorSkyblockPlugin plugin, YamlConfiguration config) throws ManagerLoadException {
         databaseType = config.getString("database.type").toUpperCase(Locale.ENGLISH);
@@ -519,6 +520,7 @@ public class SettingsContainer {
             }
         });
         blockCountsSaveThreshold = BigInteger.valueOf(config.getInt("block-counts-save-threshold", 100));
+        apiMode = config.getBoolean("api-mode", false);
     }
 
     private List<String> loadInteractables(SuperiorSkyblockPlugin plugin) {
