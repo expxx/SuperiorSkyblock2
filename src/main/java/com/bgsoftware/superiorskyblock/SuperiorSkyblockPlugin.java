@@ -159,12 +159,20 @@ public class SuperiorSkyblockPlugin extends JavaPlugin implements SuperiorSkyblo
             return;
         }
 
-        if(!getSettings().getApiMode()) {
-            loadingStage = PluginLoadingStage.SUPPORTED_SERVER_SOFTWARE;
+        if (!loadNMSAdapter()) {
+            return;
+        }
 
-            if (!loadNMSAdapter()) {
+        try {
+            settingsHandler.loadData();
+        } catch (ManagerLoadException ex) {
+            if (!ManagerLoadException.handle(ex)) {
                 return;
             }
+        }
+
+        if(!settingsHandler.getApiMode()) {
+            loadingStage = PluginLoadingStage.SUPPORTED_SERVER_SOFTWARE;
 
             loadingStage = PluginLoadingStage.NMS_INITIALIZED;
 
@@ -206,21 +214,13 @@ public class SuperiorSkyblockPlugin extends JavaPlugin implements SuperiorSkyblo
 
             loadingStage = PluginLoadingStage.START_ENABLE;
 
-            if (!getSettings().getApiMode()) {
+            if (!settingsHandler.getApiMode()) {
                 try {
                     BukkitExecutor.init(this);
 
                     loadUpgradeCostLoaders();
 
                     GlowEnchantment.registerGlowEnchantment(this);
-
-                    try {
-                        settingsHandler.loadData();
-                    } catch (ManagerLoadException ex) {
-                        if (!ManagerLoadException.handle(ex)) {
-                            return;
-                        }
-                    }
 
                     loadingStage = PluginLoadingStage.SETTINGS_INITIALIZED;
 
