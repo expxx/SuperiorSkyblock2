@@ -628,6 +628,12 @@ public interface SettingsManager {
      */
     BigInteger getBlockCountsSaveThreshold();
 
+    /**
+     * Get if plugin should be in API Mode
+     * Config-path: api-mode
+     */
+    boolean getApiMode();
+
     interface Database {
 
         /**

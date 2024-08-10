@@ -573,6 +573,9 @@ public class SettingsManagerImpl extends Manager implements SettingsManager {
         return this.global.getBlockCountsSaveThreshold();
     }
 
+    @Override
+    public boolean getApiMode() {return this.global.getApiMode();}
+
     public void updateValue(String path, Object value) throws IOException {
         File file = new File(plugin.getDataFolder(), "config.yml");
 

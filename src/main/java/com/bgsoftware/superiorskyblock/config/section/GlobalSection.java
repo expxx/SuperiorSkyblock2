@@ -359,5 +359,6 @@ public class GlobalSection extends SettingsContainerHolder {
     public BigInteger getBlockCountsSaveThreshold() {
         return getContainer().blockCountsSaveThreshold;
     }
+    public boolean getApiMode() { return getContainer().apiMode; }
 
 }

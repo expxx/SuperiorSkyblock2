@@ -16,6 +16,7 @@ import com.bgsoftware.superiorskyblock.commands.CommandsManagerImpl;
 import com.bgsoftware.superiorskyblock.commands.admin.AdminCommandsMap;
 import com.bgsoftware.superiorskyblock.commands.player.PlayerCommandsMap;
 import com.bgsoftware.superiorskyblock.config.SettingsManagerImpl;
+import com.bgsoftware.superiorskyblock.config.section.GlobalSection;
 import com.bgsoftware.superiorskyblock.core.PluginLoadingStage;
 import com.bgsoftware.superiorskyblock.core.PluginReloadReason;
 import com.bgsoftware.superiorskyblock.core.database.DataManager;
@@ -158,31 +159,34 @@ public class SuperiorSkyblockPlugin extends JavaPlugin implements SuperiorSkyblo
             return;
         }
 
-        loadingStage = PluginLoadingStage.SUPPORTED_SERVER_SOFTWARE;
+        if(!getSettings().getApiMode()) {
+            loadingStage = PluginLoadingStage.SUPPORTED_SERVER_SOFTWARE;
 
-        if (!loadNMSAdapter()) {
-            return;
+            if (!loadNMSAdapter()) {
+                return;
+            }
+
+            loadingStage = PluginLoadingStage.NMS_INITIALIZED;
+
+            Runtime.getRuntime().addShutdownHook(new ShutdownTask(this));
+
+            IslandPrivileges.registerPrivileges();
+            SortingTypes.registerSortingTypes();
+            IslandFlags.registerFlags();
+            RespawnActions.registerActions();
+            Dimensions.registerDimensions();
+
+            try {
+                SortingComparators.initializeTopIslandMembersSorting();
+            } catch (IllegalArgumentException error) {
+                Log.error("The TopIslandMembersSorting was already initialized. This can be caused by a reload or another plugin initializing it.");
+                return;
+            }
+
+            this.servicesHandler.loadDefaultServices(this);
+        } else {
+            getLogger().warning("Skipping Registrations due to API Mode");
         }
-
-        loadingStage = PluginLoadingStage.NMS_INITIALIZED;
-
-        Runtime.getRuntime().addShutdownHook(new ShutdownTask(this));
-
-        IslandPrivileges.registerPrivileges();
-        SortingTypes.registerSortingTypes();
-        IslandFlags.registerFlags();
-        RespawnActions.registerActions();
-        Dimensions.registerDimensions();
-
-        try {
-            SortingComparators.initializeTopIslandMembersSorting();
-        } catch (IllegalArgumentException error) {
-            Log.error("The TopIslandMembersSorting was already initialized. This can be caused by a reload or another plugin initializing it.");
-            return;
-        }
-
-        this.servicesHandler.loadDefaultServices(this);
-
         new Metrics(this, 4119);
 
         loadingStage = PluginLoadingStage.LOADED;
@@ -202,116 +206,125 @@ public class SuperiorSkyblockPlugin extends JavaPlugin implements SuperiorSkyblo
 
             loadingStage = PluginLoadingStage.START_ENABLE;
 
-            BukkitExecutor.init(this);
+            if (!getSettings().getApiMode()) {
+                try {
+                    BukkitExecutor.init(this);
 
-            loadUpgradeCostLoaders();
+                    loadUpgradeCostLoaders();
 
-            GlowEnchantment.registerGlowEnchantment(this);
+                    GlowEnchantment.registerGlowEnchantment(this);
 
-            try {
-                settingsHandler.loadData();
-            } catch (ManagerLoadException ex) {
-                if (!ManagerLoadException.handle(ex)) {
-                    return;
-                }
-            }
-
-            loadingStage = PluginLoadingStage.SETTINGS_INITIALIZED;
-
-            modulesHandler.loadData();
-
-            loadingStage = PluginLoadingStage.MODULES_INITIALIZED;
-
-            commandsHandler.loadData();
-
-            loadingStage = PluginLoadingStage.COMMANDS_INITIALIZED;
-
-            modulesHandler.runModuleLifecycle(ModuleLoadTime.PLUGIN_INITIALIZE, false);
-
-            EventsBus.PluginInitializeResult eventResult = eventsBus.callPluginInitializeEvent(this);
-            this.playersHandler.setPlayersContainer(Optional.ofNullable(eventResult.getPlayersContainer()).orElse(new DefaultPlayersContainer()));
-            this.gridHandler.setIslandsContainer(Optional.ofNullable(eventResult.getIslandsContainer()).orElse(new DefaultIslandsContainer(this)));
-
-            modulesHandler.runModuleLifecycle(ModuleLoadTime.BEFORE_WORLD_CREATION, false);
-
-            try {
-                providersHandler.getWorldsProvider().prepareWorlds();
-            } catch (RuntimeException ex) {
-                ManagerLoadException handlerError = new ManagerLoadException(ex, ManagerLoadException.ErrorLevel.SERVER_SHUTDOWN);
-                Log.error(handlerError, "An error occurred while preparing worlds:");
-                Bukkit.shutdown();
-                return;
-            }
-
-            loadingStage = PluginLoadingStage.WORLDS_PREPARED;
-
-            modulesHandler.runModuleLifecycle(ModuleLoadTime.NORMAL, false);
-
-            try {
-                reloadPlugin(PluginReloadReason.STARTUP);
-            } catch (ManagerLoadException error) {
-                ManagerLoadException.handle(error);
-                return;
-            }
-
-            loadingStage = PluginLoadingStage.MANAGERS_INITIALIZED;
-
-            try {
-                bukkitListeners.registerListeners();
-            } catch (RuntimeException ex) {
-                ManagerLoadException handlerError = new ManagerLoadException("Cannot load plugin due to a missing event: " + ex.getMessage() + " - contact @Ome_R!", ManagerLoadException.ErrorLevel.SERVER_SHUTDOWN);
-                Log.error(handlerError, "An error occurred while registering listeners:");
-                Bukkit.shutdown();
-                return;
-            }
-
-            loadingStage = PluginLoadingStage.EVENTS_INITIALIZED;
-
-            ChunksProvider.start();
-
-            loadingStage = PluginLoadingStage.CHUNKS_PROVIDER_INITIALIZED;
-
-            if (updater.isOutdated()) {
-                Log.info("");
-                Log.info("A new version is available (v", updater.getLatestVersion(), ")!");
-                Log.info("Version's description: \"", updater.getVersionDescription(), "\"");
-                Log.info("");
-            }
-
-            // Calculate the maximum amount of islands that fit into the world.
-            if (calculateMaxPossibleIslands() < 1000) {
-                Log.warn("It seems like you configured your max-world-size in server.properties to be a small number (", nmsAlgorithms.getMaxWorldSize(), ").");
-                Log.warn("This can lead to weird behaviors when new islands are generated beyond this limit.");
-                Log.warn("Increase the value to for better experience (Default: 29999984)");
-            }
-
-            BukkitExecutor.sync(() -> {
-                for (Player player : Bukkit.getOnlinePlayers()) {
-                    SuperiorPlayer superiorPlayer = playersHandler.getSuperiorPlayer(player);
-                    superiorPlayer.updateLastTimeStatus();
-                    Island island = gridHandler.getIslandAt(superiorPlayer.getLocation());
-                    Island playerIsland = superiorPlayer.getIsland();
-
-                    if (superiorPlayer.hasIslandFlyEnabled()) {
-                        if (island != null && island.hasPermission(superiorPlayer, IslandPrivileges.FLY)) {
-                            player.setAllowFlight(true);
-                            player.setFlying(true);
-                        } else {
-                            superiorPlayer.toggleIslandFly();
+                    try {
+                        settingsHandler.loadData();
+                    } catch (ManagerLoadException ex) {
+                        if (!ManagerLoadException.handle(ex)) {
+                            return;
                         }
                     }
 
-                    if (playerIsland != null)
-                        playerIsland.setCurrentlyActive(true);
+                    loadingStage = PluginLoadingStage.SETTINGS_INITIALIZED;
 
-                    if (island != null)
-                        island.setPlayerInside(superiorPlayer, true);
+                    modulesHandler.loadData();
+
+                    loadingStage = PluginLoadingStage.MODULES_INITIALIZED;
+
+                    commandsHandler.loadData();
+
+                    loadingStage = PluginLoadingStage.COMMANDS_INITIALIZED;
+
+                    modulesHandler.runModuleLifecycle(ModuleLoadTime.PLUGIN_INITIALIZE, false);
+
+                    EventsBus.PluginInitializeResult eventResult = eventsBus.callPluginInitializeEvent(this);
+                    this.playersHandler.setPlayersContainer(Optional.ofNullable(eventResult.getPlayersContainer()).orElse(new DefaultPlayersContainer()));
+                    this.gridHandler.setIslandsContainer(Optional.ofNullable(eventResult.getIslandsContainer()).orElse(new DefaultIslandsContainer(this)));
+
+                    modulesHandler.runModuleLifecycle(ModuleLoadTime.BEFORE_WORLD_CREATION, false);
+
+                    try {
+                        providersHandler.getWorldsProvider().prepareWorlds();
+                    } catch (RuntimeException ex) {
+                        ManagerLoadException handlerError = new ManagerLoadException(ex, ManagerLoadException.ErrorLevel.SERVER_SHUTDOWN);
+                        Log.error(handlerError, "An error occurred while preparing worlds:");
+                        Bukkit.shutdown();
+                        return;
+                    }
+
+                    loadingStage = PluginLoadingStage.WORLDS_PREPARED;
+
+                    modulesHandler.runModuleLifecycle(ModuleLoadTime.NORMAL, false);
+
+                    try {
+                        reloadPlugin(PluginReloadReason.STARTUP);
+                    } catch (ManagerLoadException error) {
+                        ManagerLoadException.handle(error);
+                        return;
+                    }
+
+                    loadingStage = PluginLoadingStage.MANAGERS_INITIALIZED;
+
+                    try {
+                        bukkitListeners.registerListeners();
+                    } catch (RuntimeException ex) {
+                        ManagerLoadException handlerError = new ManagerLoadException("Cannot load plugin due to a missing event: " + ex.getMessage() + " - contact @Ome_R!", ManagerLoadException.ErrorLevel.SERVER_SHUTDOWN);
+                        Log.error(handlerError, "An error occurred while registering listeners:");
+                        Bukkit.shutdown();
+                        return;
+                    }
+
+                    loadingStage = PluginLoadingStage.EVENTS_INITIALIZED;
+
+                    ChunksProvider.start();
+
+                    loadingStage = PluginLoadingStage.CHUNKS_PROVIDER_INITIALIZED;
+
+                    if (updater.isOutdated()) {
+                        Log.info("");
+                        Log.info("A new version is available (v", updater.getLatestVersion(), ")!");
+                        Log.info("Version's description: \"", updater.getVersionDescription(), "\"");
+                        Log.info("");
+                    }
+
+                    // Calculate the maximum amount of islands that fit into the world.
+                    if (calculateMaxPossibleIslands() < 1000) {
+                        Log.warn("It seems like you configured your max-world-size in server.properties to be a small number (", nmsAlgorithms.getMaxWorldSize(), ").");
+                        Log.warn("This can lead to weird behaviors when new islands are generated beyond this limit.");
+                        Log.warn("Increase the value to for better experience (Default: 29999984)");
+                    }
+
+                    BukkitExecutor.sync(() -> {
+                        for (Player player : Bukkit.getOnlinePlayers()) {
+                            SuperiorPlayer superiorPlayer = playersHandler.getSuperiorPlayer(player);
+                            superiorPlayer.updateLastTimeStatus();
+                            Island island = gridHandler.getIslandAt(superiorPlayer.getLocation());
+                            Island playerIsland = superiorPlayer.getIsland();
+
+                            if (superiorPlayer.hasIslandFlyEnabled()) {
+                                if (island != null && island.hasPermission(superiorPlayer, IslandPrivileges.FLY)) {
+                                    player.setAllowFlight(true);
+                                    player.setFlying(true);
+                                } else {
+                                    superiorPlayer.toggleIslandFly();
+                                }
+                            }
+
+                            if (playerIsland != null)
+                                playerIsland.setCurrentlyActive(true);
+
+                            if (island != null)
+                                island.setPlayerInside(superiorPlayer, true);
+                        }
+                    }, 1L);
+
+                    eventsBus.callPluginInitializedEvent(this);
+
+                    loadingStage = PluginLoadingStage.ENABLED;
+                } catch (Throwable error) {
+                    Log.error(error, "An unexpected error occurred while enabling the plugin:");
+                    Bukkit.shutdown();
                 }
-            }, 1L);
-
-            eventsBus.callPluginInitializedEvent(this);
-
-            loadingStage = PluginLoadingStage.ENABLED;
+            } else {
+                getLogger().warning("Skipping Plugin Initialization due to API Mode");
+            }
         } catch (Throwable error) {
             Log.error(error, "An unexpected error occurred while enabling the plugin:");
             Bukkit.shutdown();
@@ -320,63 +333,65 @@ public class SuperiorSkyblockPlugin extends JavaPlugin implements SuperiorSkyblo
 
     @Override
     public void onDisable() {
-        try {
-            if (loadingStage.isAtLeast(PluginLoadingStage.START_ENABLE))
-                BukkitExecutor.prepareDisable();
+        if(!getSettings().getApiMode()) {
+            try {
+                if (loadingStage.isAtLeast(PluginLoadingStage.START_ENABLE))
+                    BukkitExecutor.prepareDisable();
 
-            if (loadingStage.isAtLeast(PluginLoadingStage.CHUNKS_PROVIDER_INITIALIZED))
-                ChunksProvider.stop();
+                if (loadingStage.isAtLeast(PluginLoadingStage.CHUNKS_PROVIDER_INITIALIZED))
+                    ChunksProvider.stop();
 
-            if (loadingStage.isAtLeast(PluginLoadingStage.MANAGERS_INITIALIZED)) {
-                dataHandler.saveDatabase(false);
-                gridHandler.disablePlugin();
+                if (loadingStage.isAtLeast(PluginLoadingStage.MANAGERS_INITIALIZED)) {
+                    dataHandler.saveDatabase(false);
+                    gridHandler.disablePlugin();
 
-                for (Island island : gridHandler.getIslandsToPurge())
-                    island.disbandIsland();
+                    for (Island island : gridHandler.getIslandsToPurge())
+                        island.disbandIsland();
 
-                playersHandler.savePlayers();
-                gridHandler.saveIslands();
-                stackedBlocksHandler.saveStackedBlocks();
-            }
+                    playersHandler.savePlayers();
+                    gridHandler.saveIslands();
+                    stackedBlocksHandler.saveStackedBlocks();
+                }
 
-            if (loadingStage.isAtLeast(PluginLoadingStage.MODULES_INITIALIZED)) {
-                modulesHandler.getModules().forEach(modulesHandler::unregisterModule);
-            }
+                if (loadingStage.isAtLeast(PluginLoadingStage.MODULES_INITIALIZED)) {
+                    modulesHandler.getModules().forEach(modulesHandler::unregisterModule);
+                }
 
-            // Shutdown task is running from another thread, causing closing of inventories to cause errors.
-            // This check should prevent it.
-            if (Bukkit.isPrimaryThread()) {
-                Bukkit.getOnlinePlayers().forEach(player -> {
-                    SuperiorPlayer superiorPlayer = playersHandler.getSuperiorPlayer(player);
-                    player.closeInventory();
-                    superiorPlayer.updateWorldBorder(null);
-                    if (superiorPlayer.hasIslandFlyEnabled()) {
-                        player.setAllowFlight(false);
-                        player.setFlying(false);
-                    }
-                });
-            }
-        } catch (Exception error) {
-            Log.error(error, "An unexpected error occurred while disabling the plugin:");
-        } finally {
-            if (loadingStage.isAtLeast(PluginLoadingStage.MANAGERS_INITIALIZED)) {
-                Log.info("Shutting down calculation task...");
-                CalcTask.cancelTask();
-            }
+                // Shutdown task is running from another thread, causing closing of inventories to cause errors.
+                // This check should prevent it.
+                if (Bukkit.isPrimaryThread()) {
+                    Bukkit.getOnlinePlayers().forEach(player -> {
+                        SuperiorPlayer superiorPlayer = playersHandler.getSuperiorPlayer(player);
+                        player.closeInventory();
+                        superiorPlayer.updateWorldBorder(null);
+                        if (superiorPlayer.hasIslandFlyEnabled()) {
+                            player.setAllowFlight(false);
+                            player.setFlying(false);
+                        }
+                    });
+                }
+            } catch (Exception error) {
+                Log.error(error, "An unexpected error occurred while disabling the plugin:");
+            } finally {
+                if (loadingStage.isAtLeast(PluginLoadingStage.MANAGERS_INITIALIZED)) {
+                    Log.info("Shutting down calculation task...");
+                    CalcTask.cancelTask();
+                }
 
-            if (loadingStage.isAtLeast(PluginLoadingStage.NMS_INITIALIZED))
-                nmsChunks.shutdown();
+                if (loadingStage.isAtLeast(PluginLoadingStage.NMS_INITIALIZED))
+                    nmsChunks.shutdown();
 
-            if (loadingStage.isAtLeast(PluginLoadingStage.START_ENABLE)) {
-                Log.info("Shutting down executor");
-                BukkitExecutor.close();
-                Log.info("Shutting down database executor");
-                DatabaseTransactionsExecutor.stop();
-            }
+                if (loadingStage.isAtLeast(PluginLoadingStage.START_ENABLE)) {
+                    Log.info("Shutting down executor");
+                    BukkitExecutor.close();
+                    Log.info("Shutting down database executor");
+                    DatabaseTransactionsExecutor.stop();
+                }
 
-            if (loadingStage.isAtLeast(PluginLoadingStage.MANAGERS_INITIALIZED)) {
-                Log.info("Closing database. This may hang the server. Do not shut it down, or data may get lost.");
-                dataHandler.closeConnection();
+                if (loadingStage.isAtLeast(PluginLoadingStage.MANAGERS_INITIALIZED)) {
+                    Log.info("Closing database. This may hang the server. Do not shut it down, or data may get lost.");
+                    dataHandler.closeConnection();
+                }
             }
         }
     }
